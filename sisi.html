@@ -1,0 +1,457 @@
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>군인 초과근무 계산기 (최적화 버전)</title>
+<style>
+  body{font-family: system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial; padding:20px; background:#f7fafc; color:#0f172a}
+  h1{font-size:20px; margin-bottom:6px}
+  .card{background:white;border-radius:10px;padding:16px;box-shadow:0 6px 18px rgba(15,23,42,0.06);max-width:900px;margin:12px auto;}
+  label{display:block;margin-top:10px;font-weight:600}
+  input,select{padding:8px;border-radius:6px;border:1px solid #cbd5e1;width:100%;box-sizing:border-box}
+  .row{display:flex;gap:10px}
+  .col{flex:1}
+  .small{font-size:13px;color:#475569}
+  button{margin-top:12px;padding:10px 14px;border-radius:8px;border:0;background:#2563eb;color:white;cursor:pointer}
+  .result{background:#eef2ff;padding:12px;border-radius:8px;margin-top:14px}
+  .muted{color:#64748b;font-size:13px}
+  .header-time{font-weight:600;color:#2563eb}
+  .total-time-display {
+    padding: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #f1f5f9;
+    font-weight: bold;
+    text-align: center;
+    margin-top: 5px;
+    margin-bottom: 15px;
+  }
+  .result-item { margin-bottom: 15px; }
+  .result-item label { margin-top: 0; margin-bottom: 0; }
+  .shortage-display { color: #ef4444; background: #fee2e2; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="header-time" id="currentTime"></div>
+    <h1>군인 초과근무 계산기</h1>
+
+    <label>근무 형태 선택</label>
+    <select id="workType">
+      <option value="08:30|17:30|평일">1. 정규시간 (08:30 ~ 17:30)</option>
+      <option value="08:00|17:30|평일">2. 조기출근 (08:00 ~ 17:30)</option>
+      <option value="08:00|16:00|평일">3. 조기퇴근 (08:00 ~ 16:00)</option>
+      <option value="08:00|15:00|평일">4. 슈퍼드림 (08:00 ~ 15:00)</option>
+      <option value="00:00|00:00|휴일">5. 휴일 (공제 없음, 최대 4시간 인정) </option>
+    </select>
+
+    <div style="display:none;"> 
+      <label>기준 근무시간 <span class="muted">(초과근무 제외 시간)</span></label>
+      <div class="row">
+        <div class="col"><input type="time" id="workStart" value="08:30" readonly></div>
+        <div class="col"><input type="time" id="workEnd" value="17:30" readonly></div>
+      </div>
+    </div>
+    
+    <label>근무 시간 입력 <span class="muted">(HHMM 네 자리 숫자)</span></label>
+    <div class="row">
+      <div class="col">
+        <input type="text" id="startTime" placeholder="시작 시간 (예: 1730)" pattern="^([01]?[0-9]|2[0-3])[0-5][0-9]$" maxlength="4">
+      </div>
+      <div class="col">
+        <input type="text" id="endTime" placeholder="종료 시간 (예: 0200)" pattern="^([01]?[0-9]|2[0-3])[0-5][0-9]$" maxlength="4">
+      </div>
+    </div>
+    <p class="muted small" id="autoSuggestNote"></p>
+    
+    <label>이번 입력분 인정시간 (예상)</label>
+    <div class="total-time-display" id="recognizedTimeDisplay">00시간 00분</div> 
+
+    <label>실시한 시간 <span class="muted">(HHMM 네 자리 숫자, 57시간은 5700)</span></label>
+    <input type="text" id="alreadyThisMonth" pattern="^(\d{2,})[0-5][0-9]$" placeholder="예: 0000 (0시간) 또는 0830 (8시간 30분)" maxlength="4">
+
+    <label class="small">남은 당직일수</label>
+    <input type="number" id="remainingDutyDays" value="0" min="0" step="1">
+
+    <label class="small">남은 휴가실수</label>
+    <input type="number" id="remainingLeaveDays" value="0" min="0" step="1">
+
+    <label>조건(기준) — 월 최대 인정시간</label>
+    <input type="number" id="monthMax" value="57" min="0" step="0.25">
+
+    <label>하루 최대 인정시간</label>
+    <input type="number" id="dayMax" value="4" min="0" step="0.25" readonly>
+
+    <button id="calcBtn">계산하기</button>
+
+    <div id="output" class="result" style="display:none">
+      <h3>결과</h3>
+      
+      <div class="result-item">
+          <label>최대인정시간</label>
+          <div class="total-time-display" id="monthMaxText">-</div>
+      </div>
+      
+      <div class="result-item">
+          <label class="small">현실적 월 최대 인정시간 (남은 일수 기준)</label>
+          <div class="total-time-display" id="realisticMonthMaxText">-</div>
+      </div>
+      
+      <div class="result-item">
+          <label>오늘근무현황</label>
+          <div class="total-time-display" id="recognizedText">-</div>
+      </div>
+      
+      <div class="result-item">
+          <label>전체근무현황</label>
+          <div class="total-time-display" id="alreadyText">-</div>
+      </div>
+      
+      <div class="result-item">
+          <label>찍을수있는 시간(남은일수기준)</label>
+          <div class="total-time-display" id="remainingHoursText">-</div>
+      </div>
+      
+      <div class="result-item">
+          <label>부족한 시간</label>
+          <div class="total-time-display shortage-display" id="shortageHoursText">-</div>
+      </div>
+      
+      <div class="result-item">
+          <label>이번달 근무 가능일</label>
+          <div class="total-time-display" id="possibleDaysText">-</div>
+      </div>
+      
+    </div>
+  </div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  
+  // --- CONSTANTS ---
+  const DAY_MAX_MIN = 4 * 60; // 4시간 고정 (240분)
+  const DEDUCTION_MIN = 60; // 1시간 고정 공제 (60분)
+  const MINS_PER_DAY = 24 * 60; // 1440분
+  const FIXED_DATE = { year: 2025, month: 10, day: 18 }; // 2025년 11월 18일 기준
+
+  // --- UTILITY FUNCTIONS ---
+
+  /** @param {string} t - Time string in HH:MM format */
+  function timeToMinutes(t){
+    if (!t) return 0;
+    const match = t.match(/^(\d{1,}):(\d{2})$/);
+    return match ? (parseInt(match[1], 10) * 60 + parseInt(match[2], 10)) : 0;
+  }
+  
+  /** @param {string} t - Time string in HHMM format */
+  function timeToMinutesHHMM(t, isCumulative = false){
+    if (!t) return 0; 
+    const pattern = isCumulative ? /^(\d{2,})([0-5][0-9])$/ : /^(\d{2})([0-5][0-9])$/;
+    const match = t.match(pattern);
+    if (!match) return -1; 
+    
+    const h = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10);
+    
+    if (!isCumulative && (h < 0 || h > 23 || m < 0 || m > 59)) return -1;
+    if (isCumulative && (m < 0 || m > 59)) return -1;
+    
+    return h * 60 + m;
+  }
+  
+  /** @param {number} mins - Total minutes */
+  function minutesToTimeHHMM(mins, isCumulative = false) {
+      const h = isCumulative ? Math.floor(mins / 60) : Math.floor(mins / 60) % 24; 
+      const m = Math.round(mins % 60);
+      const hStr = String(h).padStart(isCumulative ? 2 : 2, '0');
+      const mStr = String(m).padStart(2, '0');
+      return `${hStr}${mStr}`;
+  }
+
+  /** @param {number} mins - Total minutes */
+  function minutesToDisplay(mins) {
+      const h = Math.floor(mins / 60);
+      const m = Math.round(mins % 60);
+      return `${String(h).padStart(2, '0')}시간 ${String(m).padStart(2, '0')}분`;
+  }
+  
+  /** @param {number} mins - Total minutes */
+  function formatMinsAsHoursClean(mins){
+    const h = Math.floor(mins/60);
+    const m = Math.round(mins%60);
+    return m === 0 ? `${h}시간` : `${h}시간 ${m}분`;
+  }
+
+  /** @param {number} aMins - Start time in minutes; @param {number} bMins - End time in minutes */
+  function minutesBetween(aMins, bMins){
+    let diff = bMins - aMins;
+    if (diff < 0) diff += MINS_PER_DAY;
+    return diff;
+  }
+  
+  /** @param {number} aMins - Start time in minutes; @param {number} bMins - End time in minutes */
+  function minutesBetweenAbsolute(aMins, bMins){
+    return Math.max(0, bMins - aMins);
+  }
+
+  /** @param {Date} date */
+  function endOfMonth(date){
+    return new Date(date.getFullYear(), date.getMonth()+1, 0);
+  }
+  
+  // --- DOM HANDLERS ---
+
+  function updateClock(){
+    const now = new Date(); 
+    const {year, month, day} = {year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate()};
+    const {hours, minutes, seconds} = {
+      hours: String(now.getHours()).padStart(2, '0'),
+      minutes: String(now.getMinutes()).padStart(2, '0'),
+      seconds: String(now.getSeconds()).padStart(2, '0')
+    };
+    $('currentTime').textContent = `${year}년 ${month}월 ${day}일 ${hours}시 ${minutes}분 ${seconds}초 (실시간)`;
+  }
+  
+  function updateWorkHours() {
+    const selected = $('workType').value;
+    const [start, end, type] = selected.split('|');
+    $('workStart').value = start;
+    $('workEnd').value = end;
+    $('workStart').dataset.type = type; 
+    
+    $('dayMax').value = 4;
+
+    const note = type === '휴일' 
+        ? '휴일 선택: 4시간 0분 근무 시 4시간 인정 (공제 없음).'
+        : '평일 선택: 5시간 0분 초과근무 시 4시간 인정 (1시간 공제 적용).';
+        
+    $('autoSuggestNote').innerHTML = note;
+    autoSuggestEndTime();
+    updateRecognizedTimeDisplay();
+  }
+
+  function updateRecognizedTimeDisplay() {
+    const {startTime, endTime, workStart, workEnd} = {
+      startTime: $('startTime').value, 
+      endTime: $('endTime').value, 
+      workStart: $('workStart').value, 
+      workEnd: $('workEnd').value
+    };
+    const workType = $('workStart').dataset.type;
+
+    if (!startTime || !endTime) return $('recognizedTimeDisplay').innerText = '00시간 00분';
+
+    const startMins = timeToMinutesHHMM(startTime);
+    const endMins = timeToMinutesHHMM(endTime);
+    
+    if (startMins === -1 || endMins === -1) return $('recognizedTimeDisplay').innerText = '00시간 00분';
+
+    const workStartMins = timeToMinutes(workStart);
+    const workEndMins = timeToMinutes(workEnd);
+
+    const calcRes = calculateOvertimeForShift({
+        startMins, endMins, workType, workStartMins, workEndMins
+    });
+
+    $('recognizedTimeDisplay').innerText = minutesToDisplay(calcRes.totalMin);
+  }
+  
+  // --- CORE LOGIC ---
+
+  function calculateOvertimeForShift(opts){
+    const {startMins, endMins, workType, workStartMins, workEndMins} = opts;
+    
+    let totalOvertime = 0;
+
+    if (workType === '휴일') {
+        totalOvertime = minutesBetween(startMins, endMins);
+        const recognizedOvertime = Math.min(totalOvertime, DAY_MAX_MIN);
+        return { totalMin: recognizedOvertime, isHoliday: true };
+
+    } else { // 평일 근무
+        // 1. 조기 출근 초과 시간
+        if (startMins < workStartMins) {
+            totalOvertime += minutesBetweenAbsolute(startMins, workStartMins);
+        }
+
+        // 2. 퇴근 후 잔업 초과 시간 (자정을 넘기는 경우 포함하여 계산)
+        const overtimeEndMins = endMins > workEndMins ? endMins : endMins + MINS_PER_DAY;
+        const overtimeStartMins = workEndMins;
+        
+        if (overtimeEndMins > overtimeStartMins) {
+             totalOvertime += minutesBetweenAbsolute(overtimeStartMins, overtimeEndMins);
+        }
+
+        // 3. 1시간 공제 적용 및 하루 최대 4시간 적용
+        let finalOvertime = Math.max(0, totalOvertime - DEDUCTION_MIN);
+        const recognizedOvertime = Math.min(finalOvertime, DAY_MAX_MIN);
+
+        return { totalMin: recognizedOvertime, isHoliday: false };
+    }
+  }
+
+  function autoSuggestEndTime() {
+    const {startTime, workStart, workEnd} = {
+      startTime: $('startTime').value, 
+      workStart: $('workStart').value, 
+      workEnd: $('workEnd').value
+    };
+    const workType = $('workStart').dataset.type;
+
+    if (!startTime || startTime.length !== 4) return $('endTime').value = '';
+
+    const startMins = timeToMinutesHHMM(startTime);
+    if (startMins === -1) return $('endTime').value = '';
+
+    const workStartMins = timeToMinutes(workStart);
+    const workEndMins = timeToMinutes(workEnd);
+    
+    const neededShiftMins = workType === '휴일' ? DAY_MAX_MIN : DAY_MAX_MIN + DEDUCTION_MIN; 
+
+    if (workType === '휴일') {
+        $('endTime').value = minutesToTimeHHMM(startMins + neededShiftMins);
+    } else {
+        let totalOvertimeMins = 0;
+        
+        // 1. 조기 출근 시간
+        if (startMins < workStartMins) {
+            totalOvertimeMins += minutesBetweenAbsolute(startMins, workStartMins);
+        }
+
+        // 2. 잔여 시간을 퇴근 후 시간에 채움
+        const remainingNeeded = Math.max(0, neededShiftMins - totalOvertimeMins);
+        const postWorkStartMins = Math.max(startMins, workEndMins); 
+        
+        $('endTime').value = minutesToTimeHHMM(postWorkStartMins + remainingNeeded);
+    }
+  }
+
+  function calc(){
+    // --- 1. INPUT RETRIEVAL & VALIDATION ---
+    const {startTime, endTime, alreadyThisMonth} = {
+      startTime: $('startTime').value, 
+      endTime: $('endTime').value, 
+      alreadyThisMonth: $('alreadyThisMonth').value
+    };
+    
+    if(!startTime || !endTime){ alert('근무 시작/종료 시간을 모두 입력하세요.'); return; }
+    
+    const startMins = timeToMinutesHHMM(startTime);
+    const endMins = timeToMinutesHHMM(endTime);
+    const alreadyMin = timeToMinutesHHMM(alreadyThisMonth, true); 
+
+    const timePatternHHMM_Work = /^([01]?[0-9]|2[0-3])[0-5][0-9]$/;
+    const timePatternHHMM_Cumulative = /^(\d{2,})[0-5][0-9]$/;
+    
+    if (!timePatternHHMM_Work.test(startTime) || !timePatternHHMM_Work.test(endTime) || (alreadyThisMonth && !timePatternHHMM_Cumulative.test(alreadyThisMonth))) {
+        alert('시간 입력 형식을 (HHMM) 확인하세요.');
+        return;
+    }
+    
+    const rawShiftMin = minutesBetween(startMins, endMins);
+    if(rawShiftMin <= 0 || rawShiftMin > MINS_PER_DAY) { alert('근무 시간이 24시간 이내인지 확인하세요.'); return; }
+
+    // --- 2. CORE CALCULATION ---
+    const {remainingDutyDays, remainingLeaveDays, monthMax, workStart, workEnd} = {
+      remainingDutyDays: parseInt($('remainingDutyDays').value || '0', 10),
+      remainingLeaveDays: parseInt($('remainingLeaveDays').value || '0', 10),
+      monthMax: parseFloat($('monthMax').value || '57'),
+      workStart: $('workStart').value,
+      workEnd: $('workEnd').value
+    };
+    const workType = $('workStart').dataset.type;
+
+    const workStartMins = timeToMinutes(workStart);
+    const workEndMins = timeToMinutes(workEnd);
+    const monthMaxMin = Math.round(monthMax * 60);
+
+    const recognizedMin = calculateOvertimeForShift({
+      startMins, endMins, workType, workStartMins, workEndMins
+    }).totalMin;
+
+    // A. 남은 일수 및 달력 기준 최대치 계산
+    const today = new Date(FIXED_DATE.year, FIXED_DATE.month, FIXED_DATE.day); 
+    const eom = endOfMonth(today); 
+    const totalDaysLeft = Math.max(0, Math.ceil((eom.getTime() - today.getTime()) / MINS_PER_DAY / 60000) + 1); 
+    const unavailable = remainingDutyDays + remainingLeaveDays; 
+    const purePossibleWorkDays = Math.max(0, totalDaysLeft - unavailable); 
+    const calendarMaxMin = purePossibleWorkDays * DAY_MAX_MIN; // 달력 기준 현실적 최대치 (정보용)
+    
+    // B. 오늘 인정 예산 계산 (사용자 목표 monthMaxMin 기준)
+    const remainingBefore = Math.max(0, monthMaxMin - alreadyMin); 
+    
+    // C. 최종 인정 시간 및 총계
+    const recognizedAfterMonthCap = Math.min(recognizedMin, remainingBefore);
+    const totalAfter = alreadyMin + recognizedAfterMonthCap;
+    const daysLeftForFutureOT = Math.max(0, purePossibleWorkDays - 1); 
+    const maxLoggableFromTomorrowMin = daysLeftForFutureOT * DAY_MAX_MIN;
+    const shortageMin = Math.max(0, monthMaxMin - totalAfter);
+
+    // --- 3. OUTPUT & WARNINGS ---
+    $('output').style.display = 'block';
+    
+    $('monthMaxText').innerText = formatMinsAsHoursClean(monthMaxMin); 
+    $('realisticMonthMaxText').innerText = formatMinsAsHoursClean(calendarMaxMin); 
+    $('recognizedText').innerText = formatMinsAsHoursClean(recognizedAfterMonthCap);
+    $('alreadyText').innerText = formatMinsAsHoursClean(totalAfter);
+    $('remainingHoursText').innerText = formatMinsAsHoursClean(maxLoggableFromTomorrowMin);
+    $('shortageHoursText').innerText = formatMinsAsHoursClean(shortageMin);
+    
+    $('possibleDaysText').innerHTML = 
+        `<div style="font-size: 1.4em; margin-bottom: 5px;">${purePossibleWorkDays}일</div>` +
+        `<div style="font-size: 0.8em; color: #475569; line-height: 1.4; font-weight: normal;">` + 
+            `오늘 포함 남은 총 일수 ${totalDaysLeft}일<br>` +
+            `당직/휴가로 ${unavailable}일 차감` + 
+        `</div>`;
+    
+    // Warning: 총계가 달력 기준 최대치를 초과하는 경우
+    let warnDiv = document.querySelector('.card .warn');
+    if (totalAfter > calendarMaxMin) {
+        const calendarClipped = totalAfter - calendarMaxMin;
+        const warn = `⚠️ 주의: 현재 전체 근무 현황 ${formatMinsAsHoursClean(totalAfter)}은/는 남은 일수 기준 최대치(${formatMinsAsHoursClean(calendarMaxMin)})를 ${formatMinsAsHoursClean(calendarClipped)} 초과합니다. 서류상 인정이 어려울 수 있습니다.`;
+        
+        if(!warnDiv){
+            warnDiv = document.createElement('div');
+            warnDiv.className = 'warn';
+            document.querySelector('.card').appendChild(warnDiv);
+        }
+        warnDiv.style.marginTop='8px';
+        warnDiv.style.padding='8px';
+        warnDiv.style.borderRadius='6px';
+        warnDiv.style.background='#fff7ed';
+        warnDiv.style.color='#92400e';
+        warnDiv.innerText = warn;
+        setTimeout(()=>warnDiv.scrollIntoView({behavior:'smooth'}),100);
+    } else {
+        if(warnDiv) warnDiv.remove();
+    }
+  }
+
+  // --- INITIALIZATION ---
+  function init() {
+    // Event Listeners
+    $('calcBtn').addEventListener('click', calc);
+    $('workType').addEventListener('change', updateWorkHours);
+    $('startTime').addEventListener('change', updateRecognizedTimeDisplay);
+    $('startTime').addEventListener('blur', () => { autoSuggestEndTime(); updateRecognizedTimeDisplay(); });
+    $('endTime').addEventListener('change', updateRecognizedTimeDisplay);
+    $('endTime').addEventListener('blur', updateRecognizedTimeDisplay);
+    
+    $('alreadyThisMonth').addEventListener('change', (e) => {
+      if(e.target.value.length < 4 && e.target.value.length > 0 && !isNaN(e.target.value)) {
+          e.target.value = e.target.value.padStart(4, '0');
+      }
+    });
+
+    // Initial setup
+    updateWorkHours();
+    updateClock();
+    setInterval(updateClock, 1000);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
